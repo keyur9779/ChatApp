@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -96,6 +97,16 @@ class WebSocketDataSource @Inject constructor() {
      * @return The sent or queued message with updated state
      */
     fun sendMessage(message: Message): Message {
+        // Check if this is a message that was already displayed in the UI
+        val existingQueuedMessage = _messageQueue.value.find { it.content == message.content }
+        
+        // If this is a retry of a message that's already in the queue, remove it from the queue
+        if (existingQueuedMessage != null) {
+            _messageQueue.update { currentQueue ->
+                currentQueue.filter { it.id != existingQueuedMessage.id }
+            }
+        }
+        
         return if (isConnected && _isOnline.value) {
             try {
                 val event = PieSocketEvent("message").apply {
@@ -115,20 +126,41 @@ class WebSocketDataSource @Inject constructor() {
     
     /**
      * Queues a message for later sending when back online.
+     * Prevents duplicate messages in the queue.
      *
      * @param message The message to queue
      */
     private fun queueMessage(message: Message) {
         _messageQueue.update { currentQueue ->
-            currentQueue + message.copy(isSending = false, isError = true)
+            // Check if the message is already in the queue (by content or ID)
+            val isAlreadyQueued = currentQueue.any { 
+                it.id == message.id || it.content == message.content 
+            }
+            
+            if (isAlreadyQueued) {
+                // Don't add duplicate message, just update the existing one to mark as error
+                currentQueue.map {
+                    if (it.id == message.id || it.content == message.content)
+                        it.copy(isSending = false, isError = true)
+                    else
+                        it
+                }
+            } else {
+                // Add the new message to the queue
+                currentQueue + message.copy(isSending = false, isError = true)
+            }
         }
     }
     
     /**
      * Retries sending all queued messages.
+     * 
+     * @return List of successfully sent message IDs that need to be updated in the UI
      */
-    fun retrySendingQueuedMessages() {
+    fun retrySendingQueuedMessages(): List<Message> {
         val currentQueue = _messageQueue.value
+        val successfullySentMessages = mutableListOf<Message>()
+        
         if (currentQueue.isNotEmpty() && isConnected && _isOnline.value) {
             val updatedQueue = mutableListOf<Message>()
             
@@ -138,6 +170,9 @@ class WebSocketDataSource @Inject constructor() {
                         data = message.content
                     }
                     chatChannel?.publish(event)
+                    
+                    // Keep track of successfully sent messages
+                    successfullySentMessages.add(message.copy(isSending = false, isError = false))
                 } catch (e: Exception) {
                     // Keep in queue if sending fails
                     updatedQueue.add(message)
@@ -146,6 +181,8 @@ class WebSocketDataSource @Inject constructor() {
             
             _messageQueue.value = updatedQueue
         }
+        
+        return successfullySentMessages
     }
     
     /**
@@ -154,11 +191,18 @@ class WebSocketDataSource @Inject constructor() {
      * @param isOnline Whether the device is online
      */
     fun setNetworkStatus(isOnline: Boolean) {
+        val wasOffline = !_isOnline.value
         _isOnline.value = isOnline
         
-        // If back online, try to send queued messages
-        if (isOnline) {
-            retrySendingQueuedMessages()
+        // If back online, try to send queued messages after a short delay
+        // to ensure connection is properly established
+        if (isOnline && wasOffline) {
+            kotlinx.coroutines.GlobalScope.launch {
+                kotlinx.coroutines.delay(1000)
+                if (_isOnline.value && isConnected) {
+                    retrySendingQueuedMessages()
+                }
+            }
         }
     }
 

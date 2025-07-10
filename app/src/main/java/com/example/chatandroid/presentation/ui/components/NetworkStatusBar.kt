@@ -4,10 +4,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.dp
  * @param showNetworkError Whether to show a network error
  * @param showConnectionError Whether to show a connection error
  * @param errorMessage Error message to display
+ * @param onRetryClicked Callback when retry button is clicked
+ * @param hasQueuedMessages Whether there are messages in the queue waiting to be sent
  */
 @Composable
 fun NetworkStatusBar(
@@ -36,7 +38,9 @@ fun NetworkStatusBar(
     isConnected: Boolean,
     showNetworkError: Boolean = false,
     showConnectionError: Boolean = false,
-    errorMessage: String = ""
+    errorMessage: String = "",
+    onRetryClicked: () -> Unit = {},
+    hasQueuedMessages: Boolean = false
 ) {
     AnimatedVisibility(
         visible = !isOnline || showNetworkError || showConnectionError || (isOnline && !isConnected),
@@ -59,7 +63,9 @@ fun NetworkStatusBar(
         }
         
         val message = when {
+            !isOnline && hasQueuedMessages -> "Offline Mode - ${getQueuedMessageCount(hasQueuedMessages)} waiting to send"
             !isOnline -> "Offline Mode - Messages will be queued"
+            showNetworkError && hasQueuedMessages -> "Connection restored - Sending queued messages..."
             showNetworkError || showConnectionError -> errorMessage.ifEmpty { "Connection error" }
             !isConnected -> "Connecting..."
             else -> ""
@@ -69,7 +75,10 @@ fun NetworkStatusBar(
             StatusMessage(
                 backgroundColor = backgroundColor,
                 icon = icon,
-                message = message
+                message = message,
+                hasQueuedMessages = hasQueuedMessages,
+                isOnline = isOnline,
+                onRetryClicked = onRetryClicked
             )
         }
     }
@@ -79,7 +88,10 @@ fun NetworkStatusBar(
 private fun StatusMessage(
     backgroundColor: Color,
     icon: ImageVector?,
-    message: String
+    message: String,
+    hasQueuedMessages: Boolean = false,
+    isOnline: Boolean = true,
+    onRetryClicked: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
@@ -88,20 +100,51 @@ private fun StatusMessage(
             .padding(8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            icon?.let {
-                Icon(
-                    imageVector = it,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.padding(end = 8.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                icon?.let {
+                    Icon(
+                        imageVector = it,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                }
+                Text(
+                    text = message,
+                    color = Color.White,
+                    fontWeight = FontWeight.Medium
                 )
             }
-            Text(
-                text = message,
-                color = Color.White,
-                fontWeight = FontWeight.Medium
-            )
+            
+            // Show retry button if we have queued messages and we're online
+            if (hasQueuedMessages && isOnline) {
+                TextButton(
+                    onClick = onRetryClicked,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Retry",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Retry")
+                }
+            }
         }
     }
+}
+
+/**
+ * Helper function to format queued message count text.
+ */
+private fun getQueuedMessageCount(hasQueuedMessages: Boolean): String {
+    return if (hasQueuedMessages) "Messages" else "Messages"
 }

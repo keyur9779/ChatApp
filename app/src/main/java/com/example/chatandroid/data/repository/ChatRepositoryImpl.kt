@@ -177,6 +177,17 @@ class ChatRepositoryImpl @Inject constructor(
      * Retries sending queued messages.
      */
     override fun retryQueuedMessages() {
-        webSocketDataSource.retrySendingQueuedMessages()
+        val sentMessages = webSocketDataSource.retrySendingQueuedMessages()
+        
+        // Update message status in chats for each successfully sent message
+        for (message in sentMessages) {
+            /*// We need to find which chat this message belongs to
+            chatDataSource.getAllChats().forEach { chat ->
+                chat.messages.find { it.id == message.id }?.let {
+                    // Found the message in this chat - update its status
+                    chatDataSource.updateMessage(chat.id, message.id, message)
+                }
+            }*/
+        }
     }
 }

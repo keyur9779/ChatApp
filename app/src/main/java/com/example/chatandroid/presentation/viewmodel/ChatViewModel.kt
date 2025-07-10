@@ -32,7 +32,8 @@ class ChatViewModel @Inject constructor(
     private val clearAllChatsUseCase: ClearAllChatsUseCase,
     private val getNetworkStatusUseCase: GetNetworkStatusUseCase,
     private val setNetworkStatusUseCase: SetNetworkStatusUseCase,
-    private val getQueuedMessagesUseCase: GetQueuedMessagesUseCase
+    private val getQueuedMessagesUseCase: GetQueuedMessagesUseCase,
+    private val retryQueuedMessagesUseCase: RetryQueuedMessagesUseCase
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -182,19 +183,9 @@ class ChatViewModel @Inject constructor(
     /**
      * Retries sending all queued messages.
      */
-    private fun retryQueuedMessages() {
-        // Since we already have the use case injected, we can directly call the repository method
+    fun retryQueuedMessages() {
         viewModelScope.launch {
-            val queuedMessages = uiState.value.queuedMessages
-            queuedMessages.forEach { message ->
-                // Find which chat this message belongs to
-                uiState.value.chats.forEach { chat ->
-                    if (chat.messages.any { it.id == message.id }) {
-                        // Resend the message
-                        sendMessageUseCase(chat.id, message.content)
-                    }
-                }
-            }
+            retryQueuedMessagesUseCase()
         }
     }
 
@@ -222,10 +213,18 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             val chatId = uiState.value.selectedChatId ?: return@launch
             
-            // Get the message content from the repository
-            uiState.value.chats.find { it.id == chatId }?.messages?.find { it.id == messageId }?.let { message ->
-                // Resend the message
-                sendMessageUseCase(chatId, message.content)
+            // Get the message from current UI state
+            val messageToRetry = uiState.value.chats
+                .find { it.id == chatId }?.messages
+                ?.find { it.id == messageId }
+            
+            if (messageToRetry != null) {
+                // Update the UI to show the message is being retried
+                val updatedMessage = messageToRetry.copy(isSending = true, isError = false)
+                
+                // Call the sendMessage directly with the original content
+                // The WebSocketDataSource will handle the queue management
+                sendMessageUseCase(chatId, messageToRetry.content)
             }
         }
     }
@@ -313,7 +312,9 @@ class ChatViewModel @Inject constructor(
                 )}
                 
                 // If we're back online and have queued messages, retry sending them
+                // Add a small delay to ensure connection is fully established
                 if (isOnline && wasOffline && uiState.value.queuedMessages.isNotEmpty()) {
+                    kotlinx.coroutines.delay(1000)
                     retryQueuedMessages()
                 }
             }

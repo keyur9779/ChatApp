@@ -1,15 +1,18 @@
 package com.example.chatandroid.presentation.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.compose.material3.BadgedBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,11 +33,23 @@ import kotlinx.coroutines.launch
 fun ChatScreen(viewModel: ChatViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     var messageText by remember { mutableStateOf("") }
-    var showApiKeyDialog by remember { mutableStateOf(false) }
-    var showNewChatDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    
+    // Auto-connect with delay when the screen is first loaded
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(1500)
+        val apiKey = "2ZilnOus6sDs7od7bbVYQgx8LlgAfabf7yGLJlUt"
+        viewModel.connectToChat(apiKey)
+        
+        // Wait for connection to be established
+        kotlinx.coroutines.delay(500)
+        
+        // Always create a single chat and select it
+        val chat = viewModel.createChat("Chat")
+        viewModel.selectChat(chat.id)
+    }
     
     LaunchedEffect(uiState.isNetworkError) {
         if (uiState.isNetworkError) {
@@ -49,12 +64,14 @@ fun ChatScreen(viewModel: ChatViewModel) {
         }
     }
     
-    // Scroll to the bottom when new messages are received
-    LaunchedEffect(uiState.chats) {
+    // Scroll to the bottom when new messages are received or sent
+    LaunchedEffect(uiState.chats, messageText) {
         uiState.selectedChatId?.let { chatId ->
             val chat = uiState.chats.find { it.id == chatId }
             chat?.let {
                 if (chat.messages.isNotEmpty()) {
+                    // Use a small delay to ensure the UI is updated before scrolling
+                    kotlinx.coroutines.delay(100)
                     listState.animateScrollToItem(chat.messages.size - 1)
                 }
             }
@@ -66,16 +83,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = uiState.chats.find { it.id == uiState.selectedChatId }?.name
-                            ?: "WebSocket Chat"
-                    )
+                    Text("WebSocket Chat")
                 },
                 actions = {
-                    IconButton(onClick = { showApiKeyDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "API Settings")
-                    }
-                    
                     // Simulate online/offline status (for testing offline functionality)
                     Switch(
                         checked = uiState.isOnline,
@@ -83,15 +93,6 @@ fun ChatScreen(viewModel: ChatViewModel) {
                     )
                 }
             )
-        },
-        floatingActionButton = {
-            if (uiState.isConnected) {
-                FloatingActionButton(
-                    onClick = { showNewChatDialog = true }
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "New Chat")
-                }
-            }
         }
     ) { padding ->
         Column(
@@ -105,9 +106,15 @@ fun ChatScreen(viewModel: ChatViewModel) {
                 isConnected = uiState.isConnected,
                 showNetworkError = uiState.showNetworkError,
                 showConnectionError = uiState.showConnectionError,
-                errorMessage = uiState.errorMessage
+                errorMessage = uiState.errorMessage,
+                hasQueuedMessages = uiState.queuedMessages.isNotEmpty(),
+                onRetryClicked = { 
+                    if (uiState.isOnline) {
+                        viewModel.retryQueuedMessages() 
+                    }
+                }
             )
-            
+
             // Content based on connection status
             if (!uiState.isConnected) {
                 // Show connection prompt
@@ -125,126 +132,141 @@ fun ChatScreen(viewModel: ChatViewModel) {
                             style = MaterialTheme.typography.headlineMedium,
                             modifier = Modifier.padding(bottom = 16.dp)
                         )
-                        
-                        Button(onClick = { showApiKeyDialog = true }) {
-                            Text("Connect to Chat Server")
-                        }
+
+                        // Connect button removed as we're auto-connecting now
+                        Text(
+                            text = "Connecting to chat server...",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
             } else {
-                // Show chat interface
-                Row(modifier = Modifier.fillMaxSize()) {
-                    // Chat list (conversations)
-                    Column(
+                // Show single chat interface
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                ) {
+                    // Determine which chat to display (use the first/default chat)
+                    val chat = if (uiState.selectedChatId != null) {
+                        uiState.chats.find { it.id == uiState.selectedChatId }
+                    } else {
+                        uiState.chats.firstOrNull()?.also {
+                            // Auto-select the first chat if none is selected
+                            viewModel.selectChat(it.id)
+                        }
+                    }
+
+                    // Messages
+                    LazyColumn(
+                        state = listState,
                         modifier = Modifier
-                            .fillMaxHeight()
                             .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        reverseLayout = false
                     ) {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(8.dp)
-                        ) {
-                            if (uiState.chats.isEmpty()) {
-                                item {
-                                    // Empty state for no chats
-                                    EmptyStateView(isConnected = uiState.isConnected)
+                        if (chat?.messages.isNullOrEmpty()) {
+                            item {
+                                // Empty state for no messages
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("No messages yet. Start the conversation!")
                                 }
-                            } else {
-                                items(uiState.chats, key = { it.id }) { chat ->
-                                    ChatListItem(
-                                        chat = chat,
-                                        isSelected = chat.id == uiState.selectedChatId,
-                                        onClick = { 
-                                            viewModel.selectChat(chat.id)
-                                            viewModel.markMessagesAsRead()
+                            }
+                        } else {
+                            chat?.let {
+                                items(it.messages, key = { msg -> msg.id }) { message ->
+                                    MessageItem(
+                                        message = message,
+                                        onLikeMessage = { messageId ->
+                                            // Handle like action if needed
+                                        },
+                                        onRetryMessage = { messageId ->
+                                            viewModel.retryMessage(messageId)
                                         }
                                     )
                                 }
                             }
                         }
                     }
-                }
-                
-                // Selected chat detail view
-                uiState.selectedChatId?.let { chatId ->
-                    val selectedChat = uiState.chats.find { it.id == chatId }
-                    selectedChat?.let { chat ->
-                        Column(
+
+                    // Typing indicator
+                    TypingIndicator(
+                        isTyping = uiState.isTyping,
+                        userName = uiState.typingUser
+                    )
+                    
+                    // Message input
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = messageText,
+                            onValueChange = { messageText = it },
+                            placeholder = { Text("Type a message") },
                             modifier = Modifier
-                                .fillMaxHeight()
-                                .weight(2f)
-                        ) {
-                            // Messages
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp),
-                                reverseLayout = false
-                            ) {
-                                if (chat.messages.isEmpty()) {
-                                    item {
-                                        // Empty state for no messages
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(16.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text("No messages yet. Start the conversation!")
-                                        }
-                                    }
-                                } else {
-                                    items(chat.messages, key = { it.id }) { message ->
-                                        MessageItem(
-                                            message = message,
-                                            onLikeMessage = { messageId -> 
-                                                // Handle like action if needed
-                                            },
-                                            onRetryMessage = { messageId ->
-                                                viewModel.retryMessage(messageId)
-                                            }
-                                        )
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            maxLines = 3,
+                            keyboardOptions = KeyboardOptions(
+                                imeAction = ImeAction.Send
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onSend = {
+                                    if (messageText.isNotBlank() && uiState.selectedChatId != null) {
+                                        viewModel.sendMessage(messageText)
+                                        messageText = ""
                                     }
                                 }
-                            }
-                            
-                            // Typing indicator
-                            TypingIndicator(
-                                isTyping = uiState.isTyping,
-                                userName = uiState.typingUser
                             )
-                            
-                            // Message input
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = messageText,
-                                    onValueChange = { messageText = it },
-                                    placeholder = { Text("Type a message") },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 8.dp),
-                                    maxLines = 3
+                        )
+                        
+                        IconButton(
+                            onClick = {
+                                if (messageText.isNotBlank() && uiState.selectedChatId != null) {
+                                    viewModel.sendMessage(messageText)
+                                    messageText = ""
+                                }
+                            },
+                            enabled = messageText.isNotBlank()
+                        ) {
+                            if (uiState.isOnline) {
+                                Icon(
+                                    imageVector = Icons.Default.Send,
+                                    contentDescription = "Send",
+                                    tint = if (messageText.isNotBlank()) 
+                                        MaterialTheme.colorScheme.primary
+                                    else 
+                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                                 )
-                                
-                                IconButton(
-                                    onClick = {
-                                        if (messageText.isNotBlank()) {
-                                            viewModel.sendMessage(messageText)
-                                            messageText = ""
-                                        }
+                            } else {
+                                // Show an indicator that the message will be queued
+                                BadgedBox(
+                                    badge = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .background(
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    shape = CircleShape
+                                                )
+                                        )
                                     }
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Send,
-                                        contentDescription = "Send",
-                                        tint = MaterialTheme.colorScheme.primary
+                                        contentDescription = "Send (Offline Mode)",
+                                        tint = if (messageText.isNotBlank()) 
+                                            MaterialTheme.colorScheme.primary
+                                        else 
+                                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                                     )
                                 }
                             }
@@ -252,30 +274,8 @@ fun ChatScreen(viewModel: ChatViewModel) {
                     }
                 }
             }
-        }
-    }
-    
-    // Dialogs
-    ApiKeyDialog(
-        isVisible = showApiKeyDialog,
-        onConnect = { apiKey ->
-            viewModel.connectToChat(apiKey)
-            showApiKeyDialog = false
-            // Create default chat if none exists
-            if (uiState.chats.isEmpty()) {
-                viewModel.createChat("General")
             }
-        },
-        onDismiss = { showApiKeyDialog = false }
-    )
-    
-    NewChatDialog(
-        isVisible = showNewChatDialog,
-        onDismiss = { showNewChatDialog = false },
-        onCreateChat = { chatName ->
-            val chat = viewModel.createChat(chatName)
-            viewModel.selectChat(chat.id)
-            showNewChatDialog = false
         }
-    )
-}
+
+        // No dialogs needed for single chat view
+    }

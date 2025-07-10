@@ -11,7 +11,7 @@ import javax.inject.Inject
  * @property chatRepository Repository that handles chat operations
  */
 class ConnectToChatUseCase @Inject constructor(
-    private val chatRepository: ChatRepository
+    val chatRepository: ChatRepository
 ) {
     /**
      * Executes the use case to connect to the chat service.

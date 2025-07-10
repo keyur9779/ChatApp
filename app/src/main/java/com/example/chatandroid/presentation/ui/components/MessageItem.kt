@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -40,9 +41,9 @@ fun MessageItem(
                 .padding(4.dp)
                 .widthIn(max = 280.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (message.isSent) 
+                containerColor = if (message.isSent)
                     MaterialTheme.colorScheme.primaryContainer
-                else 
+                else
                     MaterialTheme.colorScheme.secondaryContainer
             )
         ) {
@@ -54,12 +55,12 @@ fun MessageItem(
                 Text(
                     text = message.content,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (message.isSent) 
+                    color = if (message.isSent)
                         MaterialTheme.colorScheme.onPrimaryContainer
-                    else 
+                    else
                         MaterialTheme.colorScheme.onSecondaryContainer
                 )
-                
+
                 // Status indicators
                 Row(
                     modifier = Modifier
@@ -73,41 +74,65 @@ fun MessageItem(
                         "HH:mm, dd MMM",
                         Locale.getDefault()
                     ).format(Date(message.timestamp))
-                    
+
                     Text(
                         text = formattedTime,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (message.isSent) 
+                        color = if (message.isSent)
                             MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                        else 
+                        else
                             MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                     )
-                    
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Error indicator
-                        if (message.isError) {
-                            IconButton(
-                                onClick = { onRetryMessage(message.id) },
-                                modifier = Modifier.size(20.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Retry",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(16.dp)
+                        // Message status indicators
+                        when {
+                            message.isSending -> {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
                                 )
                             }
-                        }
-                        
-                        // Sending indicator
-                        if (message.isSending) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
+
+                            message.isError -> {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = "Failed",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+
+                                    IconButton(
+                                        onClick = { onRetryMessage(message.id) },
+                                        modifier = Modifier.size(20.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Retry",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            else -> {
+                                // Show a delivery confirmation check mark for sent messages
+                                if (message.isSent && !message.isError && !message.isSending) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Delivered",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                         }
                         
                         // Like button for received messages
@@ -124,26 +149,28 @@ fun MessageItem(
                                 )
                             }
                         }
-                        
-                        // Read indicator for sent messages
-                        if (message.isSent && message.isRead) {
-                            Text(
-                                text = "✓✓",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 4.dp)
-                            )
-                        } else if (message.isSent) {
-                            Text(
-                                text = "✓",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
-                                modifier = Modifier.padding(start = 4.dp)
-                            )
+
+                                // Read indicator for sent messages
+                                if (message.isSent && message.isRead) {
+                                    Text(
+                                        text = "✓✓",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(start = 4.dp)
+                                    )
+                                } else if (message.isSent) {
+                                    Text(
+                                        text = "✓",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(
+                                            alpha = 0.7f
+                                        ),
+                                        modifier = Modifier.padding(start = 4.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-    }
-}
