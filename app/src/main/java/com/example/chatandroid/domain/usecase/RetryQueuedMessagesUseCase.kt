@@ -1,6 +1,9 @@
 package com.example.chatandroid.domain.usecase
 
 import com.example.chatandroid.domain.repository.ChatRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -13,8 +16,21 @@ class RetryQueuedMessagesUseCase @Inject constructor(
 ) {
     /**
      * Executes the use case to retry sending all queued messages.
+     * 
+     * Uses a small delay before retrying to ensure connection stability
+     * and prevent duplicate message sends.
      */
-    operator fun invoke() {
-        chatRepository.retryQueuedMessages()
+    suspend operator fun invoke() = withContext(Dispatchers.IO) {
+        // Add a small delay to ensure connection is stable before retrying
+        delay(500)
+        
+        // Check if we're connected before retrying
+        if (chatRepository.isConnected()) {
+            // Retry sending queued messages
+            chatRepository.retryQueuedMessages()
+            
+            // Add a small delay after retrying to allow system to process
+            delay(300)
+        }
     }
 }

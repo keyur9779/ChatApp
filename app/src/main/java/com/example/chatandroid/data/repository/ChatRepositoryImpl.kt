@@ -177,17 +177,37 @@ class ChatRepositoryImpl @Inject constructor(
      * Retries sending queued messages.
      */
     override fun retryQueuedMessages() {
-        val sentMessages = webSocketDataSource.retrySendingQueuedMessages()
-        
-        // Update message status in chats for each successfully sent message
-        for (message in sentMessages) {
-            /*// We need to find which chat this message belongs to
-            chatDataSource.getAllChats().forEach { chat ->
-                chat.messages.find { it.id == message.id }?.let {
-                    // Found the message in this chat - update its status
-                    chatDataSource.updateMessage(chat.id, message.id, message)
+        // Synchronize to prevent race conditions during message updating
+        synchronized(this) {
+            val sentMessages = webSocketDataSource.retrySendingQueuedMessages()
+            
+            // Update message status in chats for each successfully sent message
+            for (message in sentMessages) {
+                // We need to find which chat this message belongs to
+                val allChats = chatDataSource.chats.value
+                for (chat in allChats) {
+                    // Find matching message by content and status
+                    val messageToUpdate = chat.messages.find { 
+                        // Match by content since ID might be different
+                        it.content == message.content && 
+                        it.isSent && 
+                        (it.isError || it.isSending)
+                    }
+                    
+                    messageToUpdate?.let {
+                        // Found the message in this chat - update its status
+                        chatDataSource.updateMessage(chat.id, it.id, 
+                            message.copy(
+                                id = it.id, // Keep original ID to update correct message
+                                isSending = false,
+                                isError = false,
+                                isSent = true,
+                                timestamp = System.currentTimeMillis() // Update timestamp to now
+                            )
+                        )
+                    }
                 }
-            }*/
+            }
         }
     }
 }

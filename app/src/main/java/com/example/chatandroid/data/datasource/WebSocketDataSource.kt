@@ -57,8 +57,8 @@ class WebSocketDataSource @Inject constructor() {
                     _isOnline.value = true
                     trySend(WebSocketEvent.Connected)
                     
-                    // Retry sending queued messages
-                    retrySendingQueuedMessages()
+                    // Instead of retrying messages immediately, just send a Connected event
+                    // The ViewModel will detect the connection and trigger retries with proper delays
                 }
             })
 
@@ -97,13 +97,15 @@ class WebSocketDataSource @Inject constructor() {
      * @return The sent or queued message with updated state
      */
     fun sendMessage(message: Message): Message {
-        // Check if this is a message that was already displayed in the UI
-        val existingQueuedMessage = _messageQueue.value.find { it.content == message.content }
+        // Check if this is a retry of an existing message (by ID or content)
+        val existingQueuedMessage = _messageQueue.value.find { 
+            it.id == message.id || it.content == message.content 
+        }
         
-        // If this is a retry of a message that's already in the queue, remove it from the queue
+        // Remove any existing versions of this message from the queue to prevent duplicates
         if (existingQueuedMessage != null) {
             _messageQueue.update { currentQueue ->
-                currentQueue.filter { it.id != existingQueuedMessage.id }
+                currentQueue.filter { it.id != existingQueuedMessage.id && it.content != message.content }
             }
         }
         
@@ -132,23 +134,13 @@ class WebSocketDataSource @Inject constructor() {
      */
     private fun queueMessage(message: Message) {
         _messageQueue.update { currentQueue ->
-            // Check if the message is already in the queue (by content or ID)
-            val isAlreadyQueued = currentQueue.any { 
-                it.id == message.id || it.content == message.content 
+            // Remove any existing messages with the same ID or content
+            val filteredQueue = currentQueue.filter { 
+                it.id != message.id && it.content != message.content 
             }
             
-            if (isAlreadyQueued) {
-                // Don't add duplicate message, just update the existing one to mark as error
-                currentQueue.map {
-                    if (it.id == message.id || it.content == message.content)
-                        it.copy(isSending = false, isError = true)
-                    else
-                        it
-                }
-            } else {
-                // Add the new message to the queue
-                currentQueue + message.copy(isSending = false, isError = true)
-            }
+            // Add the new message to the queue with error status
+            filteredQueue + message.copy(isSending = false, isError = true)
         }
     }
     
@@ -161,24 +153,39 @@ class WebSocketDataSource @Inject constructor() {
         val currentQueue = _messageQueue.value
         val successfullySentMessages = mutableListOf<Message>()
         
+        // If we have queued messages, are connected, and online, retry sending them
         if (currentQueue.isNotEmpty() && isConnected && _isOnline.value) {
             val updatedQueue = mutableListOf<Message>()
             
-            currentQueue.forEach { message ->
+            // Create a set of unique message content for deduplication
+            val uniqueContentMessages = currentQueue
+                .distinctBy { it.content } // Only process one message per unique content
+            
+            // Process each unique message
+            for (message in uniqueContentMessages) {
                 try {
+                    // Create a small delay between messages to avoid overwhelming the server
+                    kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(150) }
+                    
+                    // Publish the message
                     val event = PieSocketEvent("message").apply {
                         data = message.content
                     }
                     chatChannel?.publish(event)
                     
-                    // Keep track of successfully sent messages
-                    successfullySentMessages.add(message.copy(isSending = false, isError = false))
+                    // Add to successfully sent messages list
+                    successfullySentMessages.add(message.copy(
+                        isSending = false, 
+                        isError = false,
+                        isSent = true
+                    ))
                 } catch (e: Exception) {
                     // Keep in queue if sending fails
                     updatedQueue.add(message)
                 }
             }
             
+            // Update the queue with only messages that failed to send
             _messageQueue.value = updatedQueue
         }
         
@@ -194,14 +201,20 @@ class WebSocketDataSource @Inject constructor() {
         val wasOffline = !_isOnline.value
         _isOnline.value = isOnline
         
-        // If back online, try to send queued messages after a short delay
-        // to ensure connection is properly established
-        if (isOnline && wasOffline) {
-            kotlinx.coroutines.GlobalScope.launch {
-                kotlinx.coroutines.delay(1000)
-                if (_isOnline.value && isConnected) {
-                    retrySendingQueuedMessages()
-                }
+        if (!isOnline) {
+            // When going offline, mark connection as disconnected
+            isConnected = false
+        } else if (wasOffline) {
+            // Reconnect logic when coming back online
+            try {
+                // The actual reconnect will be handled by PieSocket's internal logic
+                // We're just updating our state to reflect this
+                isConnected = true
+                
+                // Don't automatically retry messages here - leave it to the repository
+                // which will be notified of the online status change and handle it properly
+            } catch (e: Exception) {
+                isConnected = false
             }
         }
     }

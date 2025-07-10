@@ -185,7 +185,26 @@ class ChatViewModel @Inject constructor(
      */
     fun retryQueuedMessages() {
         viewModelScope.launch {
-            retryQueuedMessagesUseCase()
+            // First check if we're online and connected
+            if (uiState.value.isOnline) {
+                // Update UI state to show retry attempt
+                _uiState.update { 
+                    it.copy(isRetryingMessages = true)
+                }
+                
+                try {
+                    // Call the suspend use case to retry messages
+                    retryQueuedMessagesUseCase()
+                } catch (e: Exception) {
+                    // Log error but don't crash the app
+                    println("Error retrying messages: ${e.message}")
+                } finally {
+                    // Always reset retry state
+                    _uiState.update { 
+                        it.copy(isRetryingMessages = false)
+                    }
+                }
+            }
         }
     }
 
@@ -312,10 +331,36 @@ class ChatViewModel @Inject constructor(
                 )}
                 
                 // If we're back online and have queued messages, retry sending them
-                // Add a small delay to ensure connection is fully established
-                if (isOnline && wasOffline && uiState.value.queuedMessages.isNotEmpty()) {
-                    kotlinx.coroutines.delay(1000)
-                    retryQueuedMessages()
+                // Add a delay to ensure connection is fully established
+                if (isOnline && wasOffline) {
+                    // Show a message that we're trying to reconnect
+                    _uiState.update { it.copy(
+                        showNetworkError = true,
+                        isNetworkError = true
+                    )}
+                    
+                    viewModelScope.launch {
+                        // Wait a bit longer to ensure the WebSocket has time to reconnect
+                        kotlinx.coroutines.delay(3000)
+                        
+                        // Check again if we're still online before retrying
+                        if (uiState.value.isOnline) {
+                            // Try to reconnect first
+                            if (!isConnectedUseCase() && uiState.value.chats.isNotEmpty()) {
+                                // If we have an API key stored, reconnect automatically
+                                val apiKey = "demo" // This should come from secure storage in a real app
+                                connectToChat(apiKey)
+                                
+                                // Wait again for connection to establish
+                                kotlinx.coroutines.delay(1000)
+                            }
+                            
+                            // Now retry any queued messages
+                            if (uiState.value.queuedMessages.isNotEmpty()) {
+                                retryQueuedMessages()
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -356,5 +401,6 @@ data class ChatUiState(
     val showNetworkError: Boolean = false,
     val showConnectionError: Boolean = false,
     val queuedMessages: List<Message> = emptyList(),
-    val isNetworkError: Boolean = false
+    val isNetworkError: Boolean = false,
+    val isRetryingMessages: Boolean = false
 )
